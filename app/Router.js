@@ -1,48 +1,39 @@
-'use strict';
+import React from 'react';
+import ReactDOM from 'react-dom';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { Router, match, RouterContext, browserHistory } from 'react-router';
+import Helmet from 'react-helmet';
+import routes from './Routes';
+import { Provider } from 'react-redux';
+import Root from './containers/Root';
+import configureStore from './configureStore';
 
-import React from 'react'
-import ReactDOM from 'react-dom'
-import { renderToStaticMarkup } from 'react-dom/server'
-import { createHistory } from 'history'
-import { Router, match, RoutingContext } from 'react-router'
-import Routes from './Routes'
-import Provider from './Provider'
-import Root from './components/Root'
-import NoMatch from './components/NoMatch'
-import isClient from './utils/isClient'
-import getPropsFromRoute from './utils/getPropsFromRoute'
+const isClient = typeof document !== 'undefined';
 
 if (isClient) {
+	const store = configureStore(window.__INITIAL_STATE__);
+
 	ReactDOM.render(
-		<Provider>
-			<Router history={createHistory()}>{Routes}</Router>
+		<Provider store={store}>
+			<Router history={browserHistory}>{routes}</Router>
 		</Provider>,
 		document.getElementById('root')
 	);
 }
 
-function getContentWithRoot(content, rootProps, initialData) {
-	return '<!doctype html>\n' + renderToStaticMarkup(
-		<Root content={content} initialData={initialData} {...rootProps} />
-	);
-}
-
-function getComponentContent(Component, props, initialData) {
-	return renderToStaticMarkup(
-		<Provider initialData={initialData}> 
-			<Component {...props} />
+function renderComponentWithRoot(Component, componentProps, store) {
+	const componentHtml = renderToStaticMarkup(
+		<Provider store={store}>
+			<Component {...componentProps} />
 		</Provider>
 	);
-}
 
-function handle404(res) {
-	const content = getComponentContent(NoMatch);
-	const wholeHtml = getContentWithRoot(content, {
-		meta: NoMatch.meta,
-		pageTitle: NoMatch.pageTitle
-	});
+	const head = Helmet.rewind();
+	const initialState = store.getState();
 
-	res.status(404).send(wholeHtml);
+	return '<!doctype html>\n' + renderToStaticMarkup(
+		<Root content={componentHtml} initialState={initialState} head={head} />
+	);
 }
 
 function handleError(res, error) {
@@ -53,39 +44,35 @@ function handleRedirect(res, redirectLocation) {
 	res.redirect(302, redirectLocation.pathname + redirectLocation.search);
 }
 
-function handleRoute(res, renderProps) {
-
-	const isDeveloping = process.env.NODE_ENV !== 'production' ? true : false;
-	const routeProps = getPropsFromRoute(renderProps, ['pageTitle', 'meta', 'requestState']);
-
-	function renderPage(response) {
-
-		const content = getComponentContent(RoutingContext, renderProps, response);
-		const wholeHtml = getContentWithRoot(content, routeProps, response);
-
-		res.status(200).send(wholeHtml);
-	}
-
-	if (routeProps.requestState) {
-		routeProps.requestState().then(renderPage);
-	} else {
-		renderPage();
-	}
+function routeIsUnmatched(renderProps) {
+	return renderProps.routes[renderProps.routes.length - 1].path === '*';
 }
 
-function ServerRouter(req, res) {
+function handleRoute(res, renderProps) {
+	const store = configureStore();
+	const status = routeIsUnmatched(renderProps) ? 404 : 200;
+	const readyOnAllActions = renderProps.components
+		.filter((component) => component.readyOnActions)
+		.map((component) => component.readyOnActions(store.dispatch, renderProps.params));
 
-	match({ routes: Routes, location: req.url }, (error, redirectLocation, renderProps) => {
+	Promise
+		.all(readyOnAllActions)
+		.then(() => res.status(status).send(renderComponentWithRoot(RouterContext, renderProps, store)));
+}
+
+function serverMiddleware(req, res) {
+	match({ routes, location: req.url }, (error, redirectLocation, renderProps) => {
 		if (error) {
-			handle404(error);
-		} else if (res, redirectLocation) {
-			handleRedirect(res, redirectLocation)
+			handleError(error);
+		} else if (redirectLocation) {
+			handleRedirect(res, redirectLocation);
 		} else if (renderProps) {
 			handleRoute(res, renderProps);
 		} else {
-			handle404(res);
+			// This should actually never happen, as Routes.js has a catch-all '*' path.
+			res.sendStatus(404);
 		}
 	});
 }
 
-export default ServerRouter;
+export default serverMiddleware;

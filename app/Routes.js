@@ -1,23 +1,14 @@
-import React from 'react'
-import { Route, IndexRoute } from 'react-router'
-import App from './components/App'
-import Home from './components/Home'
-import Users from './components/Users'
-import NoMatch from './components/NoMatch'
-import isClient from './utils/isClient'
-import getPropsFromRoute from './utils/getPropsFromRoute'
-
-function onRouteEnter(nextState) {
-	if (isClient) {
-		let props = getPropsFromRoute(nextState, ['pageTitle']);
-		document.title = props.pageTitle;
-	}
-}
+import React from 'react';
+import { Route } from 'react-router';
+import App from './containers/App';
+import Home from './containers/Home';
+import User from './containers/User';
+import NoMatch from './containers/NoMatch';
 
 export default (
-	<Route path='/' component={App}>
-		<IndexRoute component={Home} onEnter={onRouteEnter} />
-		<Route path='users' component={Users} onEnter={onRouteEnter} />
-		<Route path="*" component={NoMatch} onEnter={onRouteEnter} />
+	<Route component={App}>
+		<Route path='/' component={Home} />
+		<Route path='user/:id' component={User} />
+		<Route path="*" component={NoMatch} />
 	</Route>
 );
